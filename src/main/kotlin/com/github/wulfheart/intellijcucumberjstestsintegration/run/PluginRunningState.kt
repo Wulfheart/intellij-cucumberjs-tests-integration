@@ -62,26 +62,22 @@ class PluginRunningState(
         val var10000 = cucumberNodePackage.systemDependentPath
         val cucumberExecutablePath = FileUtil.toSystemDependentName(var10000 + cucumberExecutable)
         commandLine.addParameter(cucumberExecutablePath)
-        var fileToRun = virtualFileFromPath(this.myRunConfiguration.myFilePath)
+
+        this.myRunConfiguration.toRun.forEach { runItem ->
+            val fileToRun = virtualFileFromPath(runItem.filePath)
+            if(fileToRun != null) {
+                if(runItem.line !== null) {
+                    commandLine.addParameter(fileToRun.path + ":" + runItem.line)
+                } else {
+                    commandLine.addParameter(fileToRun.path)
+                }
+
+            }
+        }
+
+        // Good enough for now, we assume that they are all in the same package.json
+        val fileToRun = virtualFileFromPath(this.myRunConfiguration.toRun.first().filePath);
         if (fileToRun != null) {
-            if (fileToRun.getExtension() != null && FileTypeRegistry.getInstance()
-                    .isFileOfType(fileToRun, GherkinFileType.INSTANCE)
-            ) {
-                commandLine.addParameter(FileUtil.toSystemDependentName(fileToRun.getPath()))
-            }
-
-            if (fileToRun.isDirectory()) {
-                commandLine.addParameter(FileUtil.toSystemDependentName(fileToRun.getPath()))
-            }
-
-            if (!fileToRun.isDirectory()) {
-                fileToRun = fileToRun.getParent()
-            }
-
-            if (StringUtil.isNotEmpty(this.myRunConfiguration.myNameFilter)) {
-                commandLine.addParameter("--name")
-                commandLine.addParameter(this.myRunConfiguration.myNameFilter)
-            }
 
             if (!this.myRunConfiguration.cucumberJsArguments.isEmpty()) {
                 commandLine.addParameters(
@@ -100,41 +96,24 @@ class PluginRunningState(
                     cucumberPackage,
                     CucumberJavaScriptUtil.getV7FormatterPath()
                 )
-            } else if (cucumberPackage.version != null && cucumberPackage.version!!.isGreaterOrEqualThan(3, 0, 0)) {
-                addCommandLineParameters(
-                    commandLine,
-                    workingDirectory,
-                    cucumberPackage,
-                    CucumberJavaScriptUtil.getV3FormatterPath()
-                )
-            } else if (cucumberPackage.version != null && cucumberPackage.version!!.isGreaterOrEqualThan(2, 0, 0)) {
-                addCommandLineParameters(
-                    commandLine,
-                    workingDirectory,
-                    cucumberPackage,
-                    CucumberJavaScriptUtil.getV2FormatterPath()
-                )
             } else {
-                commandLine.addParameter("--format")
-                commandLine.addParameter("summary")
-                commandLine.addParameter("--require")
-                commandLine.addParameter(CucumberJavaScriptUtil.getFormatterPath())
+                throw Exception("Cucumber version 3, 4, 5 and 6 are not supported anymore. Please upgrade to version 7 or higher.")
             }
 
             val packageJson = PackageJsonUtil.findUpPackageJson(fileToRun)
-            val isESM = packageJson != null && PackageJsonData.getOrCreate(packageJson).isModuleType
-            if (isESM && cucumberPackage.version != null && cucumberPackage.version!!.isGreaterOrEqualThan(
-                    8,
-                    0,
-                    0
-                )
-            ) {
-                commandLine.addParameter("--import")
-            } else {
-                commandLine.addParameter("--require")
-            }
-
-            commandLine.addParameter(fileToRun.getPath())
+            // val isESM = packageJson != null && PackageJsonData.getOrCreate(packageJson).isModuleType
+            // if (isESM && cucumberPackage.version!!.isGreaterOrEqualThan(
+            //         8,
+            //         0,
+            //         0
+            //     )
+            // ) {
+            //     commandLine.addParameter("--import")
+            // } else {
+            //     commandLine.addParameter("--require")
+            // }
+            //
+            // commandLine.addParameter(fileToRun.getPath())
             return commandLine
         } else {
             throw ExecutionException(

@@ -21,14 +21,11 @@ import org.jdom.Element
 import org.jetbrains.plugins.cucumber.javascript.CucumberJavaScriptBundle
 import org.jetbrains.plugins.cucumber.javascript.run.ui.CucumberJavaScriptConfigurationEditorForm
 
+data class ToRunItem(val filePath: String, val line: Int?)
 
 class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, name: String?) :
     LocatableConfigurationBase<Element>(project, factory, name), NodeDebugRunConfiguration {
-    var myFilePath: String = ""
-        set(value) {
-            field = PathUtil.toSystemIndependentName(value)
-        }
-    var myNameFilter: String = ""
+    var toRun = mutableListOf<ToRunItem>()
     var cucumberJsArguments: String = ""
     var workingDirectory: String? = null
         get() {
@@ -61,43 +58,68 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
     @Throws(ExecutionException::class)
     override fun getState(executor: Executor, env: ExecutionEnvironment): RunProfileState? {
         val project = env.getProject()
-        val path: String? = this.myFilePath
-        if (path != null && VirtualFileManager.getInstance().findFileByUrl(VfsUtilCore.pathToUrl(path)) != null) {
-            val virtualFile: VirtualFile? =
-                checkNotNull(VirtualFileManager.getInstance().findFileByUrl(VfsUtilCore.pathToUrl(path)))
+        this.toRun.forEach { toRunItem ->
+            val path = toRunItem.filePath
+            if (VirtualFileManager.getInstance().findFileByUrl(VfsUtilCore.pathToUrl(path)) != null) {
+                val virtualFile: VirtualFile =
+                    checkNotNull(VirtualFileManager.getInstance().findFileByUrl(VfsUtilCore.pathToUrl(path)))
 
-            val module = ModuleUtilCore.findModuleForFile(virtualFile!!, project)
-            if (module == null) {
+                val module = ModuleUtilCore.findModuleForFile(virtualFile, project)
+                if (module == null) {
+                    throw ExecutionException(
+                        CucumberJavaScriptBundle.message(
+                            "dialog.message.can.t.find.module.for.file",
+                            *arrayOfNulls<Any>(0)
+                        )
+                    )
+                } else {
+                    return PluginRunningState(env, this)
+                }
+            } else {
                 throw ExecutionException(
                     CucumberJavaScriptBundle.message(
-                        "dialog.message.can.t.find.module.for.file",
-                        *arrayOfNulls<Any>(0)
+                        "dialog.message.can.t.find.file",
+                        *arrayOf<Any?>(path)
                     )
                 )
-            } else {
-                return PluginRunningState(env, this)
             }
-        } else {
-            throw ExecutionException(
-                CucumberJavaScriptBundle.message(
-                    "dialog.message.can.t.find.file",
-                    *arrayOf<Any?>(path)
-                )
-            )
         }
+
+        throw ExecutionException("We did not anticipate this")
+
     }
 
     @Throws(RuntimeConfigurationException::class)
     override fun checkConfiguration() {
-        if (VirtualFileManager.getInstance()
-                .findFileByUrl(VfsUtilCore.pathToUrl(this.myFilePath)) == null
-        ) {
-            throw RuntimeConfigurationException(
-                CucumberJavaScriptBundle.message(
-                    "dialog.message.can.t.find.file",
-                    *arrayOf<Any?>(this.myFilePath)
+        this.toRun.forEach { toRun ->
+            if (VirtualFileManager.getInstance()
+                    .findFileByUrl(VfsUtilCore.pathToUrl(toRun.filePath)) == null
+            ) {
+                throw RuntimeConfigurationException(
+                    CucumberJavaScriptBundle.message(
+                        "dialog.message.can.t.find.file",
+                        *arrayOf<Any?>(toRun.filePath)
+                    )
                 )
-            )
+            }
+        }
+
+    }
+
+    fun addFilePath(filePath: String) {
+        val path = PathUtil.toSystemIndependentName(filePath)
+        val item = ToRunItem(path, null)
+        add(item)
+    }
+    fun addFilePathAndLine(filePath: String, line: Int) {
+        val path = PathUtil.toSystemIndependentName(filePath)
+        val item = ToRunItem(path, line)
+        add(item)
+    }
+
+    private fun add(toRunItem: ToRunItem) {
+        if(!this.toRun.contains(toRunItem)) {
+            this.toRun.add(toRunItem)
         }
     }
 

@@ -13,7 +13,7 @@ Feature: Hello World
       | foo |
       | 1   |
 
-  Scenario Outline: Lalala
+  Scenario Outline: Lalala <val>
     Given value is "<val>"
     Examples:
       | val |

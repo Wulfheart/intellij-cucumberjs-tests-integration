@@ -9,6 +9,7 @@ import com.intellij.openapi.util.Ref
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.psi.PsiDirectory
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFileSystemItem
 import com.intellij.psi.util.PsiTreeUtil
@@ -79,32 +80,46 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         context: ConfigurationContext,
         sourceElement: Ref<PsiElement?>
     ): Boolean {
+        configuration.toRun = mutableListOf()
         val element = sourceElement.get()
         if (sourceElement.isNull || element == null) {
             return false
         }
-        if(element.containingFile is GherkinFile || element is PsiDirectory) {
+        if (element !is PsiDirectory && element !is GherkinFile) {
+            return handleSingleFileThings(configuration, element, context)
+        }
+        return handleFile(configuration, element)
+        // Might need to be changed later
 
-            val container = getFileOrDirectoryToRun(element)
-            val workingDir =
-                guessWorkingDirectory(configuration.getProject(), container)
-            if (workingDir != null) {
-                configuration.workingDirectory = workingDir
-            }
 
-            configuration.setName(container.getName())
-            configuration.myFilePath = (getFileToRun(element))
-            return true
+    }
+
+    private fun handleFile(configuration: PluginRunConfiguration, element: PsiElement): Boolean {
+        val container = getFileOrDirectoryToRun(element)
+        val workingDir =
+            guessWorkingDirectory(configuration.project, container)
+        if (workingDir != null) {
+            configuration.workingDirectory = workingDir
         }
 
+        configuration.name = container.name
 
+        val path = when {
+            element.containingFile is GherkinFile -> element.containingFile.virtualFile.path
+            element is PsiDirectory -> element.virtualFile.path
+            else -> throw Exception("Unsupported element type: ${element.javaClass.name}")
+        }
+        configuration.addFilePath(path)
+        return true
+    }
 
+    fun handleSingleFileThings(configuration: PluginRunConfiguration, element: PsiElement, context: ConfigurationContext): Boolean {
         val fileOrDirectory = getFileOrDirectoryToRun(element)
         val workingDir = guessWorkingDirectory(
             configuration.project,
             fileOrDirectory
         )
-        if(workingDir !== null) {
+        if (workingDir !== null) {
             configuration.workingDirectory = workingDir
         }
 
@@ -112,21 +127,18 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         val configurationPrefix = when (tokenType) {
             GherkinTokenTypes.SCENARIO_KEYWORD -> "Scenario: "
             GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> "Scenario Outline: "
-            else -> throw Exception("Unsupported element type: ${element?.javaClass?.name}")
+            else -> throw Exception("Unsupported element type: ${element.javaClass.name}")
         }
         val scenarioName = (element.context as GherkinStepsHolder).scenarioName
         configuration.name = configurationPrefix + StringUtil.shortenPathWithEllipsis(scenarioName, 30);
 
-        var nameFilter = String.format("^%s$", StringUtil.escapeToRegexp(scenarioName))
-        if (tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD) {
-            nameFilter = nameFilter.replace("\\\\<.*?\\\\>".toRegex(), ".*")
-        }
+        val document = PsiDocumentManager.getInstance(configuration.project).getDocument(element.containingFile)!!
+        val offset = element.textRange.startOffset
 
-        configuration.myNameFilter = nameFilter
+        val lineNumber = document.getLineNumber(offset) + 1 // 0-based
+        configuration.addFilePathAndLine(fileOrDirectory.virtualFile.path, lineNumber)
+
         return true;
-
-
-
     }
 
     override fun isConfigurationFromContext(
@@ -136,7 +148,7 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         val location: PsiElement? = context.psiLocation
         if (location == null) {
             return false
-        } else if (location.getContainingFile() !is GherkinFile && location !is PsiDirectory) {
+        } else if (location.containingFile !is GherkinFile && location !is PsiDirectory) {
             return false
         } else {
             val scenario = PsiTreeUtil.getParentOfType<GherkinScenario?>(
@@ -148,11 +160,15 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
                 contextNameFilter = scenario.getScenarioName()
             }
 
+
             val contextFilePath = getFileToRun(location)
-            return StringUtil.equals(contextFilePath, configuration.myFilePath) && StringUtil.equals(
-                contextNameFilter,
-                configuration.myNameFilter
-            )
+            // return StringUtil.equals(contextFilePath, configuration.myFilePath) && StringUtil.equals(
+            //     contextNameFilter,
+            //     configuration.myNameFilter
+            // )
+
+            // TODO
+            return false
         }
     }
 }
