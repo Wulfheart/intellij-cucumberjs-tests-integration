@@ -19,9 +19,23 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.util.PathUtil
 import org.jdom.Element
 import org.jetbrains.plugins.cucumber.javascript.CucumberJavaScriptBundle
-import org.jetbrains.plugins.cucumber.javascript.run.ui.CucumberJavaScriptConfigurationEditorForm
 
-data class ToRunItem(val filePath: String, val line: Int?)
+data class ToRunItem(val filePath: String, val line: Int?) {
+    fun toLineString(): String {
+        return if (line != null) "$filePath:$line" else filePath
+    }
+    companion object {
+        fun fromLineString(lineString: String): ToRunItem {
+            val parts = lineString.split(":")
+            return if (parts.size == 2) {
+                val line = parts[1].toIntOrNull()
+                ToRunItem(parts[0], line)
+            } else {
+                ToRunItem(lineString, null)
+            }
+        }
+    }
+}
 
 class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, name: String?) :
     LocatableConfigurationBase<Element>(project, factory, name), NodeDebugRunConfiguration {
@@ -52,7 +66,7 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
     }
 
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration?> {
-        return CucumberJavaScriptConfigurationEditorForm(this.getProject())
+        return PluginEditorForm(this.getProject())
     }
 
     @Throws(ExecutionException::class)
@@ -122,5 +136,6 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
             this.toRun.add(toRunItem)
         }
     }
+
 
 }
