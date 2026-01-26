@@ -1,0 +1,158 @@
+package com.github.wulfheart.intellijcucumberjstestsintegration.run
+
+import com.intellij.execution.actions.ConfigurationContext
+import com.intellij.execution.actions.LazyRunConfigurationProducer
+import com.intellij.execution.configurations.ConfigurationFactory
+import com.intellij.lang.javascript.psi.util.JSProjectUtil
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Ref
+import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.util.text.StringUtil
+import com.intellij.psi.PsiDirectory
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiFileSystemItem
+import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.util.PsiUtilCore
+import org.jetbrains.plugins.cucumber.psi.GherkinFile
+import org.jetbrains.plugins.cucumber.psi.GherkinScenario
+import org.jetbrains.plugins.cucumber.psi.GherkinStepsHolder
+import org.jetbrains.plugins.cucumber.psi.GherkinTokenTypes
+
+// Why do we even need this?
+private fun hasParentCalledFeatures(directory: PsiDirectory?): Boolean {
+    var directory = directory
+    while (directory != null) {
+        if (directory.name == "features") {
+            return true
+        }
+
+        directory = directory.getParentDirectory()
+    }
+
+    return false
+}
+
+private fun getFileToRun(element: PsiElement): String {
+    return getPath(getFileOrDirectoryToRun(element))
+}
+
+private fun getPath(fileOrDirectory: PsiFileSystemItem): String {
+    return FileUtil.toSystemIndependentName(fileOrDirectory.getVirtualFile().getPath())
+}
+
+private fun getFileOrDirectoryToRun(element: PsiElement?): PsiFileSystemItem {
+    val fileOrDirectory = checkNotNull(
+        PsiTreeUtil.getParentOfType(
+            element,
+            PsiFileSystemItem::class.java,
+            false
+        ) as PsiFileSystemItem
+    )
+
+    return fileOrDirectory
+}
+
+private fun guessWorkingDirectory(project: Project, psiFileItem: PsiFileSystemItem): String? {
+    val virtualFile = psiFileItem.virtualFile
+    if (virtualFile == null) {
+        return null
+    } else {
+        val packageJson = JSProjectUtil.findFileUpToContentRoot(project, virtualFile, *arrayOf("package.json"))
+        if (packageJson != null) {
+            val directory = packageJson.parent
+            if (directory != null) {
+                return directory.path
+            }
+        }
+
+        return null
+    }
+}
+
+class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunConfiguration>() {
+    override fun getConfigurationFactory(): ConfigurationFactory {
+        return getInstance().configurationFactories.first()
+    }
+
+    override fun setupConfigurationFromContext(
+        configuration: PluginRunConfiguration,
+        context: ConfigurationContext,
+        sourceElement: Ref<PsiElement?>
+    ): Boolean {
+        val element = sourceElement.get()
+        if (sourceElement.isNull || element == null) {
+            return false
+        }
+        if(element.containingFile is GherkinFile || element is PsiDirectory) {
+
+            val container = getFileOrDirectoryToRun(element)
+            val workingDir =
+                guessWorkingDirectory(configuration.getProject(), container)
+            if (workingDir != null) {
+                configuration.workingDirectory = workingDir
+            }
+
+            configuration.setName(container.getName())
+            configuration.myFilePath = (getFileToRun(element))
+            return true
+        }
+
+
+
+        val fileOrDirectory = getFileOrDirectoryToRun(element)
+        val workingDir = guessWorkingDirectory(
+            configuration.project,
+            fileOrDirectory
+        )
+        if(workingDir !== null) {
+            configuration.workingDirectory = workingDir
+        }
+
+        val tokenType = PsiUtilCore.getElementType(element)
+        val configurationPrefix = when (tokenType) {
+            GherkinTokenTypes.SCENARIO_KEYWORD -> "Scenario: "
+            GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> "Scenario Outline: "
+            else -> throw Exception("Unsupported element type: ${element?.javaClass?.name}")
+        }
+        val scenarioName = (element.context as GherkinStepsHolder).scenarioName
+        configuration.name = configurationPrefix + StringUtil.shortenPathWithEllipsis(scenarioName, 30);
+
+        var nameFilter = String.format("^%s$", StringUtil.escapeToRegexp(scenarioName))
+        if (tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD) {
+            nameFilter = nameFilter.replace("\\\\<.*?\\\\>".toRegex(), ".*")
+        }
+
+        configuration.myNameFilter = nameFilter
+        return true;
+
+
+
+    }
+
+    override fun isConfigurationFromContext(
+        configuration: PluginRunConfiguration,
+        context: ConfigurationContext
+    ): Boolean {
+        val location: PsiElement? = context.psiLocation
+        if (location == null) {
+            return false
+        } else if (location.getContainingFile() !is GherkinFile && location !is PsiDirectory) {
+            return false
+        } else {
+            val scenario = PsiTreeUtil.getParentOfType<GherkinScenario?>(
+                location.originalElement,
+                GherkinScenario::class.java
+            )
+            var contextNameFilter: String? = null
+            if (scenario != null) {
+                contextNameFilter = scenario.getScenarioName()
+            }
+
+            val contextFilePath = getFileToRun(location)
+            return StringUtil.equals(contextFilePath, configuration.myFilePath) && StringUtil.equals(
+                contextNameFilter,
+                configuration.myNameFilter
+            )
+        }
+    }
+}

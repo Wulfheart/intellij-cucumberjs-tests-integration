@@ -1,0 +1,10 @@
+{
+  "default": {
+    "paths": [
+        "features/**/*.feature"
+    ],
+    "import": [
+      "features/glue-code.js"
+    ]
+  }
+}

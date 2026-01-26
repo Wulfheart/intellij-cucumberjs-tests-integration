@@ -5,11 +5,28 @@
     <vendor>wulfheart</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>cucumber-javascript</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.wulfheart.intellijcucumberjstestsintegration.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.wulfheart.intellijcucumberjstestsintegration.startup.MyProjectActivity" />
+        <configurationType
+                implementation="com.github.wulfheart.intellijcucumberjstestsintegration.run.PluginRunConfigurationType"
+                order="first"
+        />
+        <toolWindow
+                factoryClass="com.github.wulfheart.intellijcucumberjstestsintegration.toolWindow.MyToolWindowFactory"
+                id="MyToolWindow"/>
+        <postStartupActivity
+                implementation="com.github.wulfheart.intellijcucumberjstestsintegration.startup.MyProjectActivity"/>
+        <runLineMarkerContributor
+                language="Gherkin"
+                implementationClass="com.github.wulfheart.intellijcucumberjstestsintegration.run.CucumberRunLineMarker"
+                order="first"
+        />
+        <runConfigurationProducer
+                implementation="com.github.wulfheart.intellijcucumberjstestsintegration.run.PluginRunConfigurationProducer"
+        />
+
     </extensions>
 </idea-plugin>

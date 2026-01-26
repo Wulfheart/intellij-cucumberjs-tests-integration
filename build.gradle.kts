@@ -38,6 +38,7 @@ dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
 
+
         // Plugin Dependencies. Uses `platformBundledPlugins` property from the gradle.properties file for bundled IntelliJ Platform plugins.
         bundledPlugins(providers.gradleProperty("platformBundledPlugins").map { it.split(',') })
 
@@ -53,6 +54,7 @@ dependencies {
 
 // Configure IntelliJ Platform Gradle Plugin - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-extension.html
 intellijPlatform {
+//    sandboxContainer.set(layout.projectDirectory.dir("demo/.sandbox"))
     pluginConfiguration {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
@@ -127,6 +129,11 @@ kover {
 }
 
 tasks {
+    runIde {
+        argumentProviders += CommandLineArgumentProvider {
+            listOf("/home/alex/Code/intellij-cucumberjs-tests-integration/demo")
+        }
+    }
     wrapper {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
     }
