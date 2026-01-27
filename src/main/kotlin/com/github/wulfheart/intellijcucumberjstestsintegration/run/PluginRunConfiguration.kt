@@ -125,7 +125,7 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
         val item = ToRunItem(path, null)
         add(item)
     }
-    fun addFilePathAndLine(filePath: String, line: Int) {
+    fun addFilePathAndLine(filePath: String, line: Int?) {
         val path = PathUtil.toSystemIndependentName(filePath)
         val item = ToRunItem(path, line)
         add(item)

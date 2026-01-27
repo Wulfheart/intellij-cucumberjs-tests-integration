@@ -14,10 +14,9 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFileSystemItem
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.PsiUtilCore
-import org.jetbrains.plugins.cucumber.psi.GherkinFile
-import org.jetbrains.plugins.cucumber.psi.GherkinScenario
-import org.jetbrains.plugins.cucumber.psi.GherkinStepsHolder
-import org.jetbrains.plugins.cucumber.psi.GherkinTokenTypes
+import org.jetbrains.plugins.cucumber.psi.*
+import org.jetbrains.plugins.cucumber.psi.impl.GherkinTableImpl
+import org.jetbrains.plugins.cucumber.psi.impl.GherkinTableRowImpl
 
 // Why do we even need this?
 private fun hasParentCalledFeatures(directory: PsiDirectory?): Boolean {
@@ -113,7 +112,11 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         return true
     }
 
-    fun handleSingleFileThings(configuration: PluginRunConfiguration, element: PsiElement, context: ConfigurationContext): Boolean {
+    fun handleSingleFileThings(
+        configuration: PluginRunConfiguration,
+        element: PsiElement,
+        context: ConfigurationContext
+    ): Boolean {
         val fileOrDirectory = getFileOrDirectoryToRun(element)
         val workingDir = guessWorkingDirectory(
             configuration.project,
@@ -124,18 +127,31 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         }
 
         val tokenType = PsiUtilCore.getElementType(element)
-        val configurationPrefix = when (tokenType) {
-            GherkinTokenTypes.SCENARIO_KEYWORD -> "Scenario: "
-            GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> "Scenario Outline: "
+        val configurationPrefix = when {
+            tokenType == GherkinTokenTypes.SCENARIO_KEYWORD -> "Scenario: "
+            tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> "Scenario Outline: "
+            tokenType == GherkinTokenTypes.FEATURE_KEYWORD -> "Feature: "
+            element is GherkinTableRowImpl -> "Example: "
             else -> throw Exception("Unsupported element type: ${element.javaClass.name}")
         }
-        val scenarioName = (element.context as GherkinStepsHolder).scenarioName
-        configuration.name = configurationPrefix + StringUtil.shortenPathWithEllipsis(scenarioName, 30);
+
+
+        val scenarioName = when {
+            tokenType == GherkinTokenTypes.SCENARIO_KEYWORD -> (element.context as GherkinStepsHolder).scenarioName
+            tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> (element.context as GherkinStepsHolder).scenarioName
+            tokenType == GherkinTokenTypes.FEATURE_KEYWORD -> (element.context as GherkinFeature).featureName
+            element is GherkinTableRowImpl -> ((element.context as GherkinTableImpl).context?.context as GherkinStepsHolder).scenarioName
+            else -> throw Exception("Unsupported element type: ${element.javaClass.name}")
+        };
+        configuration.name = configurationPrefix + StringUtil.shortenPathWithEllipsis(scenarioName, 30)
 
         val document = PsiDocumentManager.getInstance(configuration.project).getDocument(element.containingFile)!!
         val offset = element.textRange.startOffset
 
-        val lineNumber = document.getLineNumber(offset) + 1 // 0-based
+        val lineNumber = when {
+            tokenType != GherkinTokenTypes.FEATURE_KEYWORD -> document.getLineNumber(offset) + 1 // 0-based
+            else -> null
+        }
         configuration.addFilePathAndLine(fileOrDirectory.virtualFile.path, lineNumber)
 
         return true;
