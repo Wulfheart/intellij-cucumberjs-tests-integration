@@ -1,1 +1,4 @@
 - PluginRunConfigurationProducer add example numbers
+- Plugin Context is sameContext
+- Pills to highlight examples
+- tools to better display examples

@@ -3,6 +3,9 @@ Feature: Hello World
   Scenario: Foo
     Given one
 
+  Scenario: Fail
+    Given fail
+
   Scenario Outline: Foo
     Given one
     Examples: Foooo

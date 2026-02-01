@@ -1,0 +1,21 @@
+{
+  "name": "formatter",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild --bundle ts/formatter.ts --sourcemap --platform=node --minify --outfile=../src/main/resources/formatter/formatter.js",
+    "dev": "esbuild --bundle ts/formatter.ts --sourcemap --platform=node --minify --outfile=../src/main/resources/formatter/formatter.js --watch"
+  },
+  "type": "module",
+  "author": "",
+  "dependencies": {
+    "@cucumber/cucumber": "^12.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.10",
+    "esbuild": "^0.27.2",
+    "typescript": "^5.9.3"
+  }
+}

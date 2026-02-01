@@ -1,5 +1,7 @@
 package com.github.wulfheart.intellijcucumberjstestsintegration.run
 
+import com.github.wulfheart.intellijcucumberjstestsintegration.actions.ExecuteScenarioAction
+import com.github.wulfheart.intellijcucumberjstestsintegration.utils.FormatterExtractor
 import com.intellij.execution.DefaultExecutionResult
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.ExecutionResult
@@ -9,14 +11,16 @@ import com.intellij.execution.filters.UrlFilter
 import com.intellij.execution.process.ProcessTerminatedListener
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.testframework.TestConsoleProperties
+import com.intellij.execution.testframework.actions.AbstractRerunFailedTestsAction
 import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
+import com.intellij.execution.testframework.sm.runner.SMTestLocator
 import com.intellij.execution.ui.ConsoleView
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.javascript.nodejs.NodeCommandLineUtil
-import com.intellij.javascript.nodejs.PackageJsonData
 import com.intellij.javascript.nodejs.debug.NodeLocalDebugRunProfileState
 import com.intellij.lang.javascript.buildTools.npm.PackageJsonUtil
-import com.intellij.openapi.fileTypes.FileTypeRegistry
+import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.io.FileUtil
@@ -29,8 +33,42 @@ import org.jetbrains.plugins.cucumber.javascript.CucumberJavaScriptBundle
 import org.jetbrains.plugins.cucumber.javascript.CucumberJavaScriptDisposable
 import org.jetbrains.plugins.cucumber.javascript.CucumberJavaScriptUtil
 import org.jetbrains.plugins.cucumber.javascript.run.CucumberPackage
-import org.jetbrains.plugins.cucumber.psi.GherkinFileType
 import java.nio.charset.StandardCharsets
+
+
+class TestLocator : SMTestLocator {
+    override fun getLocation(
+        protocol: String,
+        path: String,
+        project: com.intellij.openapi.project.Project,
+        scope: com.intellij.psi.search.GlobalSearchScope
+    ): MutableList<com.intellij.execution.Location<out com.intellij.psi.PsiElement>> {
+        println("get location called with protocol: $protocol, path: $path")
+        return mutableListOf()
+    }
+}
+
+class CucumberConsoleProperties(
+    config: PluginRunConfiguration,
+    executor: com.intellij.execution.Executor
+) : SMTRunnerConsoleProperties(config, "cucumber", executor) {
+    val locator: SMTestLocator
+
+    init {
+        locator = TestLocator()
+        // isIdBasedTestTree = true
+    }
+
+    override fun getTestLocator(): SMTestLocator? {
+        return locator;
+    }
+
+    override fun createRerunFailedTestsAction(
+        consoleView: ConsoleView
+    ): AbstractRerunFailedTestsAction {
+        return ExecuteScenarioAction(consoleView)
+    }
+}
 
 class PluginRunningState(
     private val myExecutionEnvironment: ExecutionEnvironment,
@@ -65,8 +103,8 @@ class PluginRunningState(
 
         this.myRunConfiguration.toRun.forEach { runItem ->
             val fileToRun = virtualFileFromPath(runItem.filePath)
-            if(fileToRun != null) {
-                if(runItem.line !== null) {
+            if (fileToRun != null) {
+                if (runItem.line !== null) {
                     commandLine.addParameter(fileToRun.path + ":" + runItem.line)
                 } else {
                     commandLine.addParameter(fileToRun.path)
@@ -90,30 +128,20 @@ class PluginRunningState(
             val workingDirectory = this.workingDir
             commandLine.withWorkDirectory(workingDirectory)
             if (cucumberPackage.version != null && cucumberPackage.version!!.isGreaterOrEqualThan(7, 0, 0)) {
+                // val path = FormatterExtractor.formatterPath.absolutePath
+                val path = "/home/alex/Code/intellij-cucumberjs-tests-integration/src/main/resources/formatter/formatter.js"
+
                 addCommandLineParameters(
                     commandLine,
                     workingDirectory,
                     cucumberPackage,
-                    CucumberJavaScriptUtil.getV7FormatterPath()
+                    path
                 )
             } else {
                 throw Exception("Cucumber version 3, 4, 5 and 6 are not supported anymore. Please upgrade to version 7 or higher.")
             }
 
             val packageJson = PackageJsonUtil.findUpPackageJson(fileToRun)
-            // val isESM = packageJson != null && PackageJsonData.getOrCreate(packageJson).isModuleType
-            // if (isESM && cucumberPackage.version!!.isGreaterOrEqualThan(
-            //         8,
-            //         0,
-            //         0
-            //     )
-            // ) {
-            //     commandLine.addParameter("--import")
-            // } else {
-            //     commandLine.addParameter("--require")
-            // }
-            //
-            // commandLine.addParameter(fileToRun.getPath())
             return commandLine
         } else {
             throw ExecutionException(
@@ -132,8 +160,11 @@ class PluginRunningState(
         }
 
     private fun createSMTRunnerConsoleView(): ConsoleView {
-        val testConsoleProperties: TestConsoleProperties =
-            SMTRunnerConsoleProperties(this.myRunConfiguration, "cucumber", this.myExecutionEnvironment.getExecutor())
+        val testConsoleProperties: TestConsoleProperties = CucumberConsoleProperties(
+            this.myRunConfiguration,
+            this.myExecutionEnvironment.executor
+        )
+
         val consoleView: ConsoleView = SMTestRunnerConnectionUtil.createConsole("cucumber", testConsoleProperties)
         consoleView.addMessageFilter(UrlFilter())
         Disposer.register(
