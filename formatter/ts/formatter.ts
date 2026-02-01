@@ -4,6 +4,7 @@ import {TestStepResultStatus} from '@cucumber/messages'
 import {TeamcityMessage} from "./teamcityMessage.js";
 import * as path from 'path';
 import IEnvelope = messages.Envelope;
+import {Query} from "@cucumber/query";
 
 interface SourceLocation {
     uri: string;
@@ -11,31 +12,16 @@ interface SourceLocation {
 }
 
 export default class CustomFormatter extends Formatter {
-    // Maps pickleId -> source location
-    private pickleLocations: Map<string, SourceLocation> = new Map();
-    // Maps testCaseId -> pickleId
-    private testCaseToPickle: Map<string, string> = new Map();
-    // Maps testCaseStartedId -> testCaseId
-    private testCaseStartedToTestCase: Map<string, string> = new Map();
-    // Maps astNodeId -> line number (from gherkinDocument)
-    private astNodeLines: Map<string, number> = new Map();
-    // Working directory for resolving absolute paths
     private workingDirectory: string;
+
+    private query = new Query();
 
     constructor(options: IFormatterOptions) {
         super(options);
         this.workingDirectory = process.cwd();
 
         options.eventBroadcaster.on('envelope', (envelope: IEnvelope) => {
-            if (envelope.gherkinDocument) {
-                this.onGherkinDocument(envelope.gherkinDocument);
-            }
-            if (envelope.pickle) {
-                this.onPickle(envelope.pickle);
-            }
-            if (envelope.testCase) {
-                this.onTestCase(envelope.testCase);
-            }
+            this.query.update(envelope);
             if (envelope.testCaseStarted) {
                 this.onTestCaseStarted(envelope.testCaseStarted);
             }
@@ -54,86 +40,8 @@ export default class CustomFormatter extends Formatter {
         })
     }
 
-    private onGherkinDocument(doc: messages.GherkinDocument) {
-        // Extract line numbers for all AST nodes (scenarios, examples, etc.)
-        if (!doc.feature) return;
-
-        for (const child of doc.feature.children) {
-            if (child.scenario) {
-                const scenario = child.scenario;
-                if (scenario.id && scenario.location) {
-                    this.astNodeLines.set(scenario.id, scenario.location.line);
-                }
-                // Also capture example table rows for scenario outlines
-                if (scenario.examples) {
-                    for (const examples of scenario.examples) {
-                        if (examples.tableBody) {
-                            for (const row of examples.tableBody) {
-                                if (row.id && row.location) {
-                                    this.astNodeLines.set(row.id, row.location.line);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Handle rule children (scenarios inside rules)
-            if (child.rule) {
-                for (const ruleChild of child.rule.children) {
-                    if (ruleChild.scenario) {
-                        const scenario = ruleChild.scenario;
-                        if (scenario.id && scenario.location) {
-                            this.astNodeLines.set(scenario.id, scenario.location.line);
-                        }
-                        if (scenario.examples) {
-                            for (const examples of scenario.examples) {
-                                if (examples.tableBody) {
-                                    for (const row of examples.tableBody) {
-                                        if (row.id && row.location) {
-                                            this.astNodeLines.set(row.id, row.location.line);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private onPickle(pickle: messages.Pickle) {
-        // Store pickle location
-        // For scenario outlines with examples, use the last astNodeId (the example row)
-        // For regular scenarios, use the first (and only) astNodeId
-        if (pickle.id && pickle.uri) {
-            const astNodeId = pickle.astNodeIds.length > 0
-                ? pickle.astNodeIds[pickle.astNodeIds.length - 1]
-                : undefined;
-
-            const line = astNodeId ? this.astNodeLines.get(astNodeId) : undefined;
-
-            this.pickleLocations.set(pickle.id, {
-                uri: pickle.uri,
-                line: line ?? 1
-            });
-        }
-    }
-
-    private onTestCase(testCase: messages.TestCase) {
-        // Map testCaseId -> pickleId
-        if (testCase.id && testCase.pickleId) {
-            this.testCaseToPickle.set(testCase.id, testCase.pickleId);
-        }
-    }
-
     private onTestCaseStarted(event: messages.TestCaseStarted) {
-        // Map testCaseStartedId -> testCaseId for later use in step events
-        if (event.id && event.testCaseId) {
-            this.testCaseStartedToTestCase.set(event.id, event.testCaseId);
-        }
-
-        const location = this.getTestCaseLocation(event.testCaseId);
+        const location = this.getTestCaseLocation(event);
         const message = TeamcityMessage.new("testSuiteStarted")
             .addAttribute("name", event.testCaseId);
 
@@ -146,16 +54,26 @@ export default class CustomFormatter extends Formatter {
     }
 
     private onTestCaseFinished(event: messages.TestCaseFinished) {
+        const testCaseId = this.query.findTestCaseBy(event)?.id ?? "";
         log(
             TeamcityMessage.new("testSuiteFinished")
-                .addAttribute("name", event.testCaseId)
+                .addAttribute("name", testCaseId)
         );
     }
 
-    private getTestCaseLocation(testCaseId: string): SourceLocation | undefined {
-        const pickleId = this.testCaseToPickle.get(testCaseId);
-        if (!pickleId) return undefined;
-        return this.pickleLocations.get(pickleId);
+    private getTestCaseLocation(event: messages.TestCaseStarted): SourceLocation | undefined {
+        const pickle = this.query.findPickleBy(event)
+        if(pickle === undefined) {
+            return undefined;
+        }
+        const location = this.query.findLocationOf(pickle);
+        if(location === undefined) {
+            return undefined;
+        }
+        return {
+            line: location.line,
+            uri: pickle.uri
+        };
     }
 
     private onTestRunStarted(event: messages.TestRunStarted) {
@@ -165,7 +83,7 @@ export default class CustomFormatter extends Formatter {
     private onTestStepStarted(event: messages.TestStepStarted) {
         log(TeamcityMessage.new("testStarted")
             .addAttribute("name", event.testStepId)
-            .addAttribute("nodeId", event.testStepId)
+            // .addAttribute("nodeId", event.testStepId)
             .addAttribute("captureStandardOutput", "true")
         )
     }
@@ -181,7 +99,7 @@ export default class CustomFormatter extends Formatter {
                 log(
                     TeamcityMessage.new("testFailed")
                         .addAttribute("name", event.testStepId)
-                        .addAttribute("nodeId", event.testStepId)
+                        // .addAttribute("nodeId", event.testStepId)
                         .addAttribute("message", "")
                 )
                 // Todo: Message
@@ -194,7 +112,7 @@ export default class CustomFormatter extends Formatter {
         log(
             TeamcityMessage.new("testFinished")
                 .addAttribute("name", event.testStepId)
-                .addAttribute("nodeId", event.testStepId)
+                // .addAttribute("nodeId", event.testStepId)
         )
     }
 
