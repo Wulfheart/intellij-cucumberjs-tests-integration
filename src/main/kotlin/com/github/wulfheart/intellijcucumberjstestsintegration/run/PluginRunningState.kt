@@ -37,14 +37,54 @@ import java.nio.charset.StandardCharsets
 
 
 class TestLocator : SMTestLocator {
+    companion object {
+        const val PROTOCOL = "file"
+    }
+
     override fun getLocation(
         protocol: String,
         path: String,
         project: com.intellij.openapi.project.Project,
         scope: com.intellij.psi.search.GlobalSearchScope
     ): MutableList<com.intellij.execution.Location<out com.intellij.psi.PsiElement>> {
-        println("get location called with protocol: $protocol, path: $path")
-        return mutableListOf()
+        if (protocol != PROTOCOL) return mutableListOf()
+
+        // Parse path:line format (e.g., "/path/to/file.feature:123")
+        val (filePath, line) = parsePathAndLine(path)
+
+        val virtualFile = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(filePath)
+            ?: return mutableListOf()
+
+        val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(virtualFile)
+            ?: return mutableListOf()
+
+        // If we have a line number, try to find the element at that line
+        if (line != null && line > 0) {
+            val document = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(psiFile)
+            if (document != null && line <= document.lineCount) {
+                val offset = document.getLineStartOffset(line - 1) // line is 1-indexed
+                val element = psiFile.findElementAt(offset)
+                if (element != null) {
+                    return mutableListOf(com.intellij.execution.PsiLocation.fromPsiElement(element))
+                }
+            }
+        }
+
+        // Fallback to the file itself
+        return mutableListOf(com.intellij.execution.PsiLocation.fromPsiElement(psiFile))
+    }
+
+    private fun parsePathAndLine(path: String): Pair<String, Int?> {
+        // Path format: "/path/to/file.feature:123" or just "/path/to/file.feature"
+        val lastColonIndex = path.lastIndexOf(':')
+        if (lastColonIndex > 0) {
+            val potentialLine = path.substring(lastColonIndex + 1)
+            val line = potentialLine.toIntOrNull()
+            if (line != null) {
+                return Pair(path.substring(0, lastColonIndex), line)
+            }
+        }
+        return Pair(path, null)
     }
 }
 
@@ -159,8 +199,8 @@ class PluginRunningState(
             return FileUtil.toSystemIndependentName(workingDir ?: "")
         }
 
-    private fun createSMTRunnerConsoleView(): ConsoleView {
-        val testConsoleProperties: TestConsoleProperties = CucumberConsoleProperties(
+    private fun createSMTRunnerConsoleView(): Pair<ConsoleView, CucumberConsoleProperties> {
+        val testConsoleProperties = CucumberConsoleProperties(
             this.myRunConfiguration,
             this.myExecutionEnvironment.executor
         )
@@ -171,17 +211,30 @@ class PluginRunningState(
             CucumberJavaScriptDisposable.getInstance(this.myExecutionEnvironment.getProject()),
             consoleView
         )
-        return consoleView
+        return Pair(consoleView, testConsoleProperties)
     }
 
     @Throws(ExecutionException::class)
     override fun execute(debugPort: Int): ExecutionResult {
         val commandLine = this.getCommand(debugPort)
         val processHandler = NodeCommandLineUtil.createProcessHandler(commandLine, false)
-        val consoleView = this.createSMTRunnerConsoleView()
+        val (consoleView, consoleProperties) = this.createSMTRunnerConsoleView()
         ProcessTerminatedListener.attach(processHandler)
         consoleView.attachToProcess(processHandler)
-        return DefaultExecutionResult(consoleView, processHandler)
+
+        val executionResult = DefaultExecutionResult(consoleView, processHandler)
+
+        // Set up rerun failed tests action
+        val rerunAction = consoleProperties.createRerunFailedTestsAction(consoleView)
+        if (rerunAction != null) {
+            rerunAction.init(consoleProperties)
+            if (consoleView is com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView) {
+                rerunAction.setModelProvider { consoleView.resultsViewer }
+            }
+            executionResult.setRestartActions(rerunAction)
+        }
+
+        return executionResult
     }
 
     companion object {

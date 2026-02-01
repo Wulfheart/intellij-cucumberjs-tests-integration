@@ -137,5 +137,14 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
         }
     }
 
-
+    override fun clone(): PluginRunConfiguration {
+        val clone = super.clone() as PluginRunConfiguration
+        // Deep copy mutable fields
+        clone.toRun = this.toRun.toMutableList()
+        clone.cucumberJsArguments = this.cucumberJsArguments
+        clone.workingDirectory = this.workingDirectory
+        clone.myInterpreterRef = this.myInterpreterRef
+        clone.myEnvData = EnvironmentVariablesData.create(this.myEnvData.envs, this.myEnvData.isPassParentEnvs)
+        return clone
+    }
 }
