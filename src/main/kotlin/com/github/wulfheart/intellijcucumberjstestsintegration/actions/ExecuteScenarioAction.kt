@@ -26,8 +26,12 @@ class ExecuteScenarioAction(consoleView: ConsoleView) : AbstractRerunFailedTests
 
         if (failedLocations.isEmpty()) return null
 
-        // Get original configuration
-        val originalConfig = environment.runProfile as? PluginRunConfiguration ?: return null
+        // Get original configuration - handle both initial run and subsequent reruns
+        val originalConfig = when (val runProfile = environment.runProfile) {
+            is PluginRunConfiguration -> runProfile
+            is MyRunProfile -> runProfile.peer as? PluginRunConfiguration
+            else -> null
+        } ?: return null
 
         return MyRerunProfile(originalConfig, failedLocations)
     }
