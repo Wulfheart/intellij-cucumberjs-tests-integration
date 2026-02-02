@@ -130,23 +130,29 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         }
 
         val tokenType = PsiUtilCore.getElementType(element)
-        val configurationPrefix = when {
-            tokenType == GherkinTokenTypes.SCENARIO_KEYWORD -> "Scenario: "
-            tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> "Scenario Outline: "
-            tokenType == GherkinTokenTypes.FEATURE_KEYWORD -> "Feature: "
-            element is GherkinTableRowImpl -> "Example: "
+
+        configuration.name = when {
+            tokenType == GherkinTokenTypes.SCENARIO_KEYWORD -> {
+                val scenarioName = (element.context as GherkinStepsHolder).scenarioName
+                "Scenario: " + StringUtil.shortenPathWithEllipsis(scenarioName, 30)
+            }
+            tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> {
+                val scenarioName = (element.context as GherkinStepsHolder).scenarioName
+                "Scenario Outline: " + StringUtil.shortenPathWithEllipsis(scenarioName, 30)
+            }
+            tokenType == GherkinTokenTypes.FEATURE_KEYWORD -> {
+                val featureName = (element.context as GherkinFeature).featureName
+                "Feature: " + StringUtil.shortenPathWithEllipsis(featureName, 30)
+            }
+            element is GherkinTableRowImpl -> {
+                val table = element.context as GherkinTableImpl
+                val scenarioName = (table.context?.context as GherkinStepsHolder).scenarioName
+                val dataRows = table.dataRows
+                val exampleNumber = dataRows.indexOf(element) + 1
+                "Scenario: " + StringUtil.shortenPathWithEllipsis(scenarioName, 30) + " (Example #$exampleNumber)"
+            }
             else -> throw Exception("Unsupported element type: ${element.javaClass.name}")
         }
-
-
-        val scenarioName = when {
-            tokenType == GherkinTokenTypes.SCENARIO_KEYWORD -> (element.context as GherkinStepsHolder).scenarioName
-            tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD -> (element.context as GherkinStepsHolder).scenarioName
-            tokenType == GherkinTokenTypes.FEATURE_KEYWORD -> (element.context as GherkinFeature).featureName
-            element is GherkinTableRowImpl -> ((element.context as GherkinTableImpl).context?.context as GherkinStepsHolder).scenarioName
-            else -> throw Exception("Unsupported element type: ${element.javaClass.name}")
-        };
-        configuration.name = configurationPrefix + StringUtil.shortenPathWithEllipsis(scenarioName, 30)
 
         val document = PsiDocumentManager.getInstance(configuration.project).getDocument(element.containingFile)!!
         val offset = element.textRange.startOffset
