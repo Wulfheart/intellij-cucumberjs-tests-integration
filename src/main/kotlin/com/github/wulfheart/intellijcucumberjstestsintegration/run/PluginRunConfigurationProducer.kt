@@ -14,7 +14,10 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFileSystemItem
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.PsiUtilCore
-import org.jetbrains.plugins.cucumber.psi.*
+import org.jetbrains.plugins.cucumber.psi.GherkinFeature
+import org.jetbrains.plugins.cucumber.psi.GherkinFile
+import org.jetbrains.plugins.cucumber.psi.GherkinStepsHolder
+import org.jetbrains.plugins.cucumber.psi.GherkinTokenTypes
 import org.jetbrains.plugins.cucumber.psi.impl.GherkinTableImpl
 import org.jetbrains.plugins.cucumber.psi.impl.GherkinTableRowImpl
 
@@ -161,30 +164,42 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         configuration: PluginRunConfiguration,
         context: ConfigurationContext
     ): Boolean {
-        val location: PsiElement? = context.psiLocation
-        if (location == null) {
-            return false
-        } else if (location.containingFile !is GherkinFile && location !is PsiDirectory) {
-            return false
+        val element = context.psiLocation ?: return false
+
+        // Build expected toRun items based on context
+        val expectedItems = mutableListOf<ToRunItem>()
+
+        if (element is PsiDirectory || element is GherkinFile) {
+            // File or directory context
+            val path = when {
+                element.containingFile is GherkinFile -> element.containingFile.virtualFile?.path
+                element is PsiDirectory -> element.virtualFile?.path
+                else -> null
+            } ?: return false
+            expectedItems.add(ToRunItem(FileUtil.toSystemIndependentName(path), null))
         } else {
-            val scenario = PsiTreeUtil.getParentOfType<GherkinScenario?>(
-                location.originalElement,
-                GherkinScenario::class.java
-            )
-            var contextNameFilter: String? = null
-            if (scenario != null) {
-                contextNameFilter = scenario.getScenarioName()
+            // Single element context (scenario, feature keyword, table row, etc.)
+            val fileOrDirectory = PsiTreeUtil.getParentOfType(element, PsiFileSystemItem::class.java, false)
+                ?: return false
+            val filePath = fileOrDirectory.virtualFile?.path ?: return false
+
+            val tokenType = PsiUtilCore.getElementType(element)
+            val document = PsiDocumentManager.getInstance(context.project).getDocument(element.containingFile)
+                ?: return false
+
+            val lineNumber = when {
+                tokenType == GherkinTokenTypes.SCENARIO_KEYWORD ||
+                tokenType == GherkinTokenTypes.SCENARIO_OUTLINE_KEYWORD ||
+                element is GherkinTableRowImpl -> {
+                    document.getLineNumber(element.textRange.startOffset) + 1
+                }
+                tokenType == GherkinTokenTypes.FEATURE_KEYWORD -> null
+                else -> return false
             }
-
-
-            val contextFilePath = getFileToRun(location)
-            // return StringUtil.equals(contextFilePath, configuration.myFilePath) && StringUtil.equals(
-            //     contextNameFilter,
-            //     configuration.myNameFilter
-            // )
-
-            // TODO
-            return false
+            expectedItems.add(ToRunItem(FileUtil.toSystemIndependentName(filePath), lineNumber))
         }
+
+        // Compare configuration's toRun with expected items
+        return configuration.toRun == expectedItems
     }
 }
