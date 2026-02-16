@@ -26,6 +26,7 @@
         />
         <runConfigurationProducer
                 implementation="com.github.wulfheart.intellijcucumberjstestsintegration.run.PluginRunConfigurationProducer"
+                order="first"
         />
 
     </extensions>

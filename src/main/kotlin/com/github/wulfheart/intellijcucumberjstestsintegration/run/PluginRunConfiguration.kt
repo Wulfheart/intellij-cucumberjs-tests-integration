@@ -26,13 +26,16 @@ data class ToRunItem(val filePath: String, val line: Int?) {
     }
     companion object {
         fun fromLineString(lineString: String): ToRunItem {
-            val parts = lineString.split(":")
-            return if (parts.size == 2) {
-                val line = parts[1].toIntOrNull()
-                ToRunItem(parts[0], line)
-            } else {
-                ToRunItem(lineString, null)
+            // Use lastIndexOf to handle paths that might contain colons
+            val lastColonIndex = lineString.lastIndexOf(':')
+            if (lastColonIndex > 0) {
+                val potentialLine = lineString.substring(lastColonIndex + 1)
+                val line = potentialLine.toIntOrNull()
+                if (line != null) {
+                    return ToRunItem(lineString.substring(0, lastColonIndex), line)
+                }
             }
+            return ToRunItem(lineString, null)
         }
     }
 }
@@ -54,6 +57,18 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
         super.readExternal(element)
         DefaultJDOMExternalizer.readExternal(this, element)
         this.myEnvData = EnvironmentVariablesData.readExternal(element)
+
+        // Read toRun list
+        this.toRun.clear()
+        val toRunElement = element.getChild("toRunItems")
+        if (toRunElement != null) {
+            toRunElement.getChildren("item").forEach { itemElement ->
+                val filePath = itemElement.getAttributeValue("filePath") ?: return@forEach
+                val lineStr = itemElement.getAttributeValue("line")
+                val line = lineStr?.toIntOrNull()
+                this.toRun.add(ToRunItem(filePath, line))
+            }
+        }
     }
 
     @Throws(WriteExternalException::class)
@@ -63,6 +78,19 @@ class PluginRunConfiguration(project: Project, factory: ConfigurationFactory, na
         if (EnvironmentVariablesData.DEFAULT != this.myEnvData) {
             this.myEnvData.writeExternal(element)
         }
+
+        // Write toRun list - remove existing element first to prevent duplicates
+        element.removeChild("toRunItems")
+        val toRunElement = Element("toRunItems")
+        this.toRun.forEach { item ->
+            val itemElement = Element("item")
+            itemElement.setAttribute("filePath", item.filePath)
+            if (item.line != null) {
+                itemElement.setAttribute("line", item.line.toString())
+            }
+            toRunElement.addContent(itemElement)
+        }
+        element.addContent(toRunElement)
     }
 
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration?> {

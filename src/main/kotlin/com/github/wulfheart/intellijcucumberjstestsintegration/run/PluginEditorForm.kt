@@ -20,7 +20,7 @@ import javax.swing.JPanel
 import javax.swing.JTextField
 
 class PluginEditorForm(private val myProject: Project) :
-    SettingsEditor<PluginRunConfiguration?>() {
+    SettingsEditor<PluginRunConfiguration>() {
     private val myMainPanel: JPanel? = null
     private var myFileField: JTextField? = null
     private var myCucumberArguments: JTextField? = null
@@ -56,7 +56,11 @@ class PluginEditorForm(private val myProject: Project) :
         configuration.myInterpreterRef = this.myInterpreterField!!.interpreterRef
         configuration.workingDirectory = this.myWorkingDirectoryField!!.text
         configuration.toRun =
-            this.myFileField!!.text.split(",").map { s -> ToRunItem.fromLineString(s.trim()) }.toMutableList()
+            this.myFileField!!.text.split(",")
+                .map { s -> s.trim() }
+                .filter { it.isNotEmpty() }
+                .map { s -> ToRunItem.fromLineString(s) }
+                .toMutableList()
         CucumberJavaScriptUtil.setCucumberPackage(
             configuration.getProject(),
             this.myCucumberPackageField!!.getSelected()

@@ -83,9 +83,14 @@ class PluginRunConfigurationProducer : LazyRunConfigurationProducer<PluginRunCon
         sourceElement: Ref<PsiElement?>
     ): Boolean {
         configuration.toRun = mutableListOf()
-        val element = sourceElement.get()
-        if (sourceElement.isNull || element == null) {
+        // Use sourceElement if available, otherwise fall back to context.psiLocation
+        val element = sourceElement.get() ?: context.psiLocation
+        if (element == null) {
             return false
+        }
+        // Update sourceElement ref if we used the fallback
+        if (sourceElement.get() == null) {
+            sourceElement.set(element)
         }
         if (element !is PsiDirectory && element !is GherkinFile) {
             return handleSingleFileThings(configuration, element, context)

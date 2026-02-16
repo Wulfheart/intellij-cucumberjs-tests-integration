@@ -10,6 +10,12 @@ export default class CustomFormatter extends Formatter {
     private workingDirectory: string;
     private query = new Query();
 
+    // Track currently open suites to ensure proper closing
+    private currentFeatureName: string | null = null;
+    private currentScenarioName: string | null = null;
+    private currentExampleName: string | null = null;
+    private currentExampleLine: number | null = null; // Used for uniqueness tracking
+
     constructor(options: IFormatterOptions) {
         super(options);
         this.workingDirectory = process.cwd();
@@ -29,9 +35,6 @@ export default class CustomFormatter extends Formatter {
             if (envelope.testStepFinished) {
                 this.onTestStepFinished(envelope.testStepFinished);
             }
-            if (envelope.testCaseFinished) {
-                this.onTestCaseFinished(envelope.testCaseFinished);
-            }
             if (envelope.testRunFinished) {
                 this.onTestRunFinished();
             }
@@ -44,43 +47,37 @@ export default class CustomFormatter extends Formatter {
         return this.query.findLineageBy(pickle);
     }
 
-    private getPreviousTestCase(): messages.TestCaseStarted | undefined {
-        const allStarted = this.query.findAllTestCaseStarted();
-        return allStarted.length > 1 ? allStarted[allStarted.length - 2] : undefined;
-    }
-
-    private getNextUnfinishedTestCase(currentEvent: messages.TestCaseFinished): messages.TestCaseStarted | undefined {
-        const allStarted = this.query.findAllTestCaseStarted();
-        const allFinished = this.query.findAllTestCaseFinished();
-        const finishedIds = new Set(allFinished.map(f => f.testCaseStartedId));
-
-        // Find the first test case that hasn't finished yet (excluding the current one)
-        return allStarted.find(s => s.id !== currentEvent.testCaseStartedId && !finishedIds.has(s.id));
-    }
 
     private onTestRunStarted() {
         log(TeamcityMessage.new("enteredTheMatrix"));
     }
 
     private onTestRunFinished() {
-        // Close remaining open suites based on the last test case
-        const allStarted = this.query.findAllTestCaseStarted();
-        const lastTestCase = allStarted[allStarted.length - 1];
-        if (!lastTestCase) return;
-
-        const lineage = this.getLineageForTestCase(lastTestCase);
-        if (!lineage?.feature || !lineage?.scenario) return;
-
-        // Close example suite if it was a scenario outline
-        if (lineage.exampleIndex !== undefined) {
-            this.logExampleSuiteFinished(lineage.exampleIndex);
+        // Close any remaining open suites using tracked names
+        if (this.currentExampleName) {
+            log(
+                TeamcityMessage.new("testSuiteFinished")
+                    .addAttribute("name", this.currentExampleName)
+            );
+            this.currentExampleName = null;
+            this.currentExampleLine = null;
         }
 
-        // Close scenario suite
-        this.logScenarioSuiteFinished(lineage);
+        if (this.currentScenarioName) {
+            log(
+                TeamcityMessage.new("testSuiteFinished")
+                    .addAttribute("name", this.currentScenarioName)
+            );
+            this.currentScenarioName = null;
+        }
 
-        // Close feature suite
-        this.logFeatureSuiteFinished(lineage);
+        if (this.currentFeatureName) {
+            log(
+                TeamcityMessage.new("testSuiteFinished")
+                    .addAttribute("name", this.currentFeatureName)
+            );
+            this.currentFeatureName = null;
+        }
     }
 
     private onTestCaseStarted(event: messages.TestCaseStarted) {
@@ -90,119 +87,109 @@ export default class CustomFormatter extends Formatter {
         const pickle = this.query.findPickleBy(event);
         if (!pickle?.uri) return;
 
-        const prevTestCase = this.getPreviousTestCase();
-        const prevLineage = prevTestCase ? this.getLineageForTestCase(prevTestCase) : undefined;
+        // Determine new suite names
+        const newFeatureName = `Feature: ${lineage.feature.name}`;
+        const isOutline = lineage.exampleIndex !== undefined;
+        const prefix = isOutline ? "Scenario Outline" : "Scenario";
+        const newScenarioName = `${prefix}: ${lineage.scenario.name}`;
 
-        // Check if feature changed
-        const featureChanged = !prevLineage || prevLineage.gherkinDocument?.uri !== lineage.gherkinDocument?.uri;
-
-        // Check if scenario changed
-        const scenarioChanged = !prevLineage || prevLineage.scenario?.id !== lineage.scenario.id;
-
-        // Close previous suites if needed
-        if (featureChanged && prevLineage) {
-            if (prevLineage.exampleIndex !== undefined) {
-                this.logExampleSuiteFinished(prevLineage.exampleIndex);
-            }
-            if (prevLineage.scenario) {
-                this.logScenarioSuiteFinished(prevLineage);
-            }
-            if (prevLineage.feature) {
-                this.logFeatureSuiteFinished(prevLineage);
-            }
-        } else if (scenarioChanged && prevLineage) {
-            if (prevLineage.exampleIndex !== undefined) {
-                this.logExampleSuiteFinished(prevLineage.exampleIndex);
-            }
-            if (prevLineage.scenario) {
-                this.logScenarioSuiteFinished(prevLineage);
-            }
-        } else if (prevLineage?.exampleIndex !== undefined) {
-            // Same scenario but different example
-            this.logExampleSuiteFinished(prevLineage.exampleIndex);
-        }
-
-        // Start new suites
-        if (featureChanged) {
-            this.logFeatureSuiteStarted(lineage, pickle.uri);
-        }
-
-        if (scenarioChanged) {
-            this.logScenarioSuiteStarted(lineage, pickle.uri);
-        }
-
-        // Start example suite for scenario outlines
+        let newExampleName: string | null = null;
+        let newExampleLine: number | null = null;
         if (lineage.exampleIndex !== undefined) {
-            this.logExampleSuiteStarted(lineage, pickle);
+            const location = this.query.findLocationOf(pickle);
+            newExampleLine = location?.line ?? lineage.scenario.location.line;
+            const exampleNumber = lineage.exampleIndex + 1; // 0-based to 1-based
+            const examplesName = lineage.examples?.name;
+            if (examplesName) {
+                newExampleName = `Example #${exampleNumber}: ${examplesName}`;
+            } else {
+                newExampleName = `Example #${exampleNumber}`;
+            }
         }
-    }
 
-    private onTestCaseFinished(event: messages.TestCaseFinished) {
-        // Example suites are closed when the next test case starts or at test run end
-        // No action needed here since we handle transitions in onTestCaseStarted
-    }
+        // Close previous suites if they changed (in reverse order: example -> scenario -> feature)
+        // Use line number for example comparison to handle duplicate names across Examples tables
+        if (this.currentExampleName && this.currentExampleLine !== newExampleLine) {
+            log(
+                TeamcityMessage.new("testSuiteFinished")
+                    .addAttribute("name", this.currentExampleName)
+            );
+            this.currentExampleName = null;
+            this.currentExampleLine = null;
+        }
 
-    private logFeatureSuiteStarted(lineage: NonNullable<ReturnType<Query['findLineageBy']>>, uri: string) {
-        if (!lineage.feature) return;
-        const absolutePath = path.resolve(this.workingDirectory, uri);
-        log(
-            TeamcityMessage.new("testSuiteStarted")
-                .addAttribute("name", `Feature: ${lineage.feature.name}`)
-                .addAttribute("locationHint", `file://${absolutePath}:${lineage.feature.location.line}`)
-        );
-    }
+        if (this.currentScenarioName && this.currentScenarioName !== newScenarioName) {
+            // Close example first if still open
+            if (this.currentExampleName) {
+                log(
+                    TeamcityMessage.new("testSuiteFinished")
+                        .addAttribute("name", this.currentExampleName)
+                );
+                this.currentExampleName = null;
+                this.currentExampleLine = null;
+            }
+            log(
+                TeamcityMessage.new("testSuiteFinished")
+                    .addAttribute("name", this.currentScenarioName)
+            );
+            this.currentScenarioName = null;
+        }
 
-    private logFeatureSuiteFinished(lineage: NonNullable<ReturnType<Query['findLineageBy']>>) {
-        if (!lineage.feature) return;
-        log(
-            TeamcityMessage.new("testSuiteFinished")
-                .addAttribute("name", `Feature: ${lineage.feature.name}`)
-        );
-    }
+        if (this.currentFeatureName && this.currentFeatureName !== newFeatureName) {
+            // Close scenario first if still open
+            if (this.currentScenarioName) {
+                if (this.currentExampleName) {
+                    log(
+                        TeamcityMessage.new("testSuiteFinished")
+                            .addAttribute("name", this.currentExampleName)
+                    );
+                    this.currentExampleName = null;
+                    this.currentExampleLine = null;
+                }
+                log(
+                    TeamcityMessage.new("testSuiteFinished")
+                        .addAttribute("name", this.currentScenarioName)
+                );
+                this.currentScenarioName = null;
+            }
+            log(
+                TeamcityMessage.new("testSuiteFinished")
+                    .addAttribute("name", this.currentFeatureName)
+            );
+            this.currentFeatureName = null;
+        }
 
-    private logScenarioSuiteStarted(lineage: NonNullable<ReturnType<Query['findLineageBy']>>, uri: string) {
-        if (!lineage.scenario) return;
-        const absolutePath = path.resolve(this.workingDirectory, uri);
-        const isOutline = lineage.exampleIndex !== undefined;
-        const prefix = isOutline ? "Scenario Outline" : "Scenario";
-        log(
-            TeamcityMessage.new("testSuiteStarted")
-                .addAttribute("name", `${prefix}: ${lineage.scenario.name}`)
-                .addAttribute("locationHint", `file://${absolutePath}:${lineage.scenario.location.line}`)
-        );
-    }
+        // Start new suites (in order: feature -> scenario -> example)
+        if (!this.currentFeatureName) {
+            const absolutePath = path.resolve(this.workingDirectory, pickle.uri);
+            log(
+                TeamcityMessage.new("testSuiteStarted")
+                    .addAttribute("name", newFeatureName)
+                    .addAttribute("locationHint", `file://${absolutePath}:${lineage.feature.location.line}`)
+            );
+            this.currentFeatureName = newFeatureName;
+        }
 
-    private logScenarioSuiteFinished(lineage: NonNullable<ReturnType<Query['findLineageBy']>>) {
-        if (!lineage.scenario) return;
-        const isOutline = lineage.exampleIndex !== undefined;
-        const prefix = isOutline ? "Scenario Outline" : "Scenario";
-        log(
-            TeamcityMessage.new("testSuiteFinished")
-                .addAttribute("name", `${prefix}: ${lineage.scenario.name}`)
-        );
-    }
+        if (!this.currentScenarioName) {
+            const absolutePath = path.resolve(this.workingDirectory, pickle.uri);
+            log(
+                TeamcityMessage.new("testSuiteStarted")
+                    .addAttribute("name", newScenarioName)
+                    .addAttribute("locationHint", `file://${absolutePath}:${lineage.scenario.location.line}`)
+            );
+            this.currentScenarioName = newScenarioName;
+        }
 
-    private logExampleSuiteStarted(lineage: NonNullable<ReturnType<Query['findLineageBy']>>, pickle: messages.Pickle) {
-        if (lineage.exampleIndex === undefined || !lineage.scenario) return;
-        const location = this.query.findLocationOf(pickle);
-        const uri = pickle.uri ?? '';
-        const absolutePath = path.resolve(this.workingDirectory, uri);
-        const line = location?.line ?? lineage.scenario.location.line;
-        const displayIndex = lineage.exampleIndex + 1; // 0-based to 1-based
-
-        log(
-            TeamcityMessage.new("testSuiteStarted")
-                .addAttribute("name", `Example #${displayIndex}`)
-                .addAttribute("locationHint", `file://${absolutePath}:${line}`)
-        );
-    }
-
-    private logExampleSuiteFinished(exampleIndex: number) {
-        const displayIndex = exampleIndex + 1; // 0-based to 1-based
-        log(
-            TeamcityMessage.new("testSuiteFinished")
-                .addAttribute("name", `Example #${displayIndex}`)
-        );
+        if (newExampleName && this.currentExampleLine !== newExampleLine) {
+            const absolutePath = path.resolve(this.workingDirectory, pickle.uri);
+            log(
+                TeamcityMessage.new("testSuiteStarted")
+                    .addAttribute("name", newExampleName)
+                    .addAttribute("locationHint", `file://${absolutePath}:${newExampleLine}`)
+            );
+            this.currentExampleName = newExampleName;
+            this.currentExampleLine = newExampleLine;
+        }
     }
 
     private onTestStepStarted(event: messages.TestStepStarted) {
