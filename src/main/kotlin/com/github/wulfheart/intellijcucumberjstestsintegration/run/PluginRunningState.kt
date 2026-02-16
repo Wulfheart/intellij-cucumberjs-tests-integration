@@ -141,6 +141,7 @@ class PluginRunningState(
         val cucumberExecutablePath = FileUtil.toSystemDependentName(var10000 + cucumberExecutable)
         commandLine.addParameter(cucumberExecutablePath)
 
+
         this.myRunConfiguration.toRun.forEach { runItem ->
             val fileToRun = virtualFileFromPath(runItem.filePath)
             if (fileToRun != null) {
@@ -149,7 +150,6 @@ class PluginRunningState(
                 } else {
                     commandLine.addParameter(fileToRun.path)
                 }
-
             }
         }
 

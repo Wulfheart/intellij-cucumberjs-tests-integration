@@ -49,6 +49,12 @@ export default class CustomFormatter extends Formatter {
 
 
     private onTestRunStarted() {
+        // Reset state from any previous run
+        this.currentFeatureName = null;
+        this.currentScenarioName = null;
+        this.currentExampleName = null;
+        this.currentExampleLine = null;
+
         log(TeamcityMessage.new("enteredTheMatrix"));
     }
 
