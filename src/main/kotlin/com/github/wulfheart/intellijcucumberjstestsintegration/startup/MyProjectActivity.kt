@@ -52,7 +52,6 @@ class MyProjectActivity : ProjectActivity {
 
             }
         }
-        val fooo = 2;
     }
 
 }
