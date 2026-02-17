@@ -201,12 +201,33 @@ export default class CustomFormatter extends Formatter {
     private onTestStepStarted(event: messages.TestStepStarted) {
         const testStep = this.query.findTestStepBy(event);
         const stepName = this.getStepName(testStep);
+        const locationHint = this.getStepLocationHint(event);
 
-        log(
-            TeamcityMessage.new("testStarted")
-                .addAttribute("name", stepName)
-                .addAttribute("captureStandardOutput", "true")
-        );
+        const msg = TeamcityMessage.new("testStarted")
+            .addAttribute("name", stepName)
+            .addAttribute("captureStandardOutput", "true");
+
+        if (locationHint) {
+            msg.addAttribute("locationHint", locationHint);
+        }
+
+        log(msg);
+    }
+
+    private getStepLocationHint(testStep: messages.TestStepStarted | undefined): string | null {
+        if (testStep === undefined) {
+            return null
+        }
+        const pickle = this.query.findPickleBy(testStep)
+        if(pickle === undefined) {
+            return null
+        }
+
+        const absolutePath = path.resolve(this.workingDirectory, pickle.uri);
+        if(pickle.location === undefined) {
+            return null;
+        }
+        return `file://${absolutePath}:${pickle.location.line}`;
     }
 
     private onTestStepFinished(event: messages.TestStepFinished) {
